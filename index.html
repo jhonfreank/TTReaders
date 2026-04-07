@@ -8,7 +8,7 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
         :root {
-            --active-bg: #fef08a; /* Bright yellow for current line */
+            --active-bg: #fef08a;
         }
         
         #editor-container {
@@ -22,7 +22,7 @@
             word-wrap: break-word;
             padding-bottom: 30vh;
             transition: background-color 0.3s;
-            caret-color: #2563eb; /* Blue cursor */
+            caret-color: #2563eb;
         }
 
         #editor-container:focus {
@@ -30,7 +30,6 @@
         }
 
         .sentence-node {
-            transition: background-color 0.1s;
             border-radius: 2px;
             display: inline;
         }
@@ -51,7 +50,6 @@
 </head>
 <body class="bg-slate-50 text-slate-900 min-h-screen flex flex-col">
 
-    <!-- Toolbar -->
     <header class="bg-white border-b sticky top-0 z-30 p-3 shadow-sm">
         <div class="max-w-5xl mx-auto flex flex-wrap items-center justify-between gap-3">
             <div class="flex items-center gap-2">
@@ -83,18 +81,14 @@
 
     <main class="flex-grow max-w-4xl w-full mx-auto p-4">
         <div id="status-bar" class="flex justify-between items-center mb-2 px-1">
-            <span id="status-text" class="text-xs font-semibold text-slate-400 uppercase tracking-widest">Initializing...</span>
-            <span class="text-[10px] text-slate-400 italic">Place cursor & press Play</span>
+            <span id="status-text" class="text-xs font-semibold text-slate-400 uppercase tracking-widest">Ready</span>
+            <span class="text-[10px] text-slate-400 italic">Ultra-Fast Mode</span>
         </div>
 
         <div class="bg-white rounded-xl shadow-lg border border-slate-200 overflow-hidden">
             <div id="editor-container" contenteditable="true" spellcheck="false" class="p-6 md:p-10">Welcome to your AI Text Reader. 
 
-Place your cursor anywhere in this text and click Play. 
-
-The reader will start from that exact position. You can pause the reading at any time, edit the text, move your cursor to a different spot, and press Play again to resume from the new location.
-
-The active sentence will be highlighted in yellow and the page will automatically scroll to keep the reading line in view.</div>
+Paste any amount of text here—even entire books. The editor remains fast because it only processes sentences when you click Play.</div>
         </div>
     </main>
 
@@ -117,16 +111,20 @@ The active sentence will be highlighted in yellow and the page will automaticall
         let sentences = [];
         let resumeCheckInterval = null;
         let lastManualCursorOffset = -1;
+        let rawTextBeforePlayback = "";
+        let saveTimeout = null;
 
-        // --- Persistence Logic ---
         function saveState() {
-            const state = {
-                text: editor.innerText,
-                offset: lastManualCursorOffset,
-                voice: voiceSelect.value,
-                speed: speedRange.value
-            };
-            localStorage.setItem('tts_reader_state', JSON.stringify(state));
+            if (saveTimeout) clearTimeout(saveTimeout);
+            saveTimeout = setTimeout(() => {
+                const state = {
+                    text: isPlaying || isPaused ? rawTextBeforePlayback : editor.innerText,
+                    offset: lastManualCursorOffset,
+                    voice: voiceSelect.value,
+                    speed: speedRange.value
+                };
+                localStorage.setItem('tts_reader_state', JSON.stringify(state));
+            }, 500); // Debounce save to prevent lag during rapid input/pasting
         }
 
         function loadState() {
@@ -145,11 +143,8 @@ The active sentence will be highlighted in yellow and the page will automaticall
         function loadVoices() {
             voices = synth.getVoices();
             if (voices.length === 0) return;
-
             const savedVoiceName = loadState();
-            
             voiceSelect.innerHTML = '';
-            
             const sorted = voices.sort((a, b) => {
                 const aName = a.name.toLowerCase();
                 const bName = b.name.toLowerCase();
@@ -157,20 +152,14 @@ The active sentence will be highlighted in yellow and the page will automaticall
                 const bSpec = bName.includes('microsoft') || bName.includes('online');
                 return (aSpec === bSpec) ? a.name.localeCompare(b.name) : aSpec ? -1 : 1;
             });
-
             sorted.forEach(v => {
                 const opt = document.createElement('option');
                 opt.value = v.name;
                 opt.textContent = `${v.name} (${v.lang})`;
                 voiceSelect.appendChild(opt);
             });
-
             if (savedVoiceName) voiceSelect.value = savedVoiceName;
             statusText.innerText = "Ready";
-            
-            if (lastManualCursorOffset !== -1) {
-                prepareSentences();
-            }
         }
 
         if (speechSynthesis.onvoiceschanged !== undefined) {
@@ -189,22 +178,20 @@ The active sentence will be highlighted in yellow and the page will automaticall
         }
 
         function prepareSentences() {
-            const fullText = editor.innerText;
-            const parts = fullText.match(/[^.!?\n\r]+[.!?\n\r]*|[\n\r]+/g) || [fullText];
+            rawTextBeforePlayback = editor.innerText;
+            const parts = rawTextBeforePlayback.match(/[^.!?\n\r]+[.!?\n\r]*|[\n\r]+/g) || [rawTextBeforePlayback];
             
             editor.innerHTML = '';
             sentences = [];
             let charAcc = 0;
+            const fragment = document.createDocumentFragment();
 
             parts.forEach((text, i) => {
                 const span = document.createElement('span');
                 span.className = 'sentence-node';
                 span.innerText = text;
-                span.dataset.index = i;
-                span.dataset.start = charAcc;
-                span.dataset.end = charAcc + text.length;
+                fragment.appendChild(span);
                 
-                editor.appendChild(span);
                 sentences.push({
                     el: span,
                     text: text,
@@ -213,6 +200,7 @@ The active sentence will be highlighted in yellow and the page will automaticall
                 });
                 charAcc += text.length;
             });
+            editor.appendChild(fragment);
         }
 
         function updateHighlight() {
@@ -266,14 +254,11 @@ The active sentence will be highlighted in yellow and the page will automaticall
             if (voice) utterance.voice = voice;
             utterance.rate = parseFloat(speedRange.value);
 
-            utterance.onstart = () => {
-                statusText.innerText = "Playing";
-            };
+            utterance.onstart = () => { statusText.innerText = "Playing"; };
 
             utterance.onboundary = (event) => {
                 const segmentStart = sentences[currentSentenceIndex].start;
-                const charIndex = event.charIndex;
-                lastManualCursorOffset = segmentStart + charIndex;
+                lastManualCursorOffset = segmentStart + event.charIndex;
                 saveState();
             };
 
@@ -287,7 +272,6 @@ The active sentence will be highlighted in yellow and the page will automaticall
 
             utterance.onerror = (e) => {
                 if (e.error !== 'interrupted') {
-                    console.error("Speech error:", e);
                     currentSentenceIndex++;
                     speakNext();
                 }
@@ -319,9 +303,7 @@ The active sentence will be highlighted in yellow and the page will automaticall
                     index = i;
                     break;
                 }
-                if (i === sentences.length - 1 && currentOffset >= sentences[i].start) {
-                    index = i;
-                }
+                if (i === sentences.length - 1 && currentOffset >= sentences[i].start) index = i;
             }
 
             currentSentenceIndex = index;
@@ -349,13 +331,12 @@ The active sentence will be highlighted in yellow and the page will automaticall
             isPlaying = false;
             isPaused = false;
             lastManualCursorOffset = -1;
-            saveState();
             synth.cancel();
             stopHeartbeat();
             iconPlay.className = 'fas fa-play ml-1';
             statusText.innerText = "Stopped";
-            const content = editor.innerText;
-            editor.innerHTML = content; 
+            editor.innerText = rawTextBeforePlayback || editor.innerText; 
+            saveState();
             currentSentenceIndex = 0;
         }
 
@@ -385,15 +366,31 @@ The active sentence will be highlighted in yellow and the page will automaticall
         };
 
         voiceSelect.onchange = saveState;
-        editor.addEventListener('input', saveState);
-        editor.addEventListener('mousedown', () => { if (isPlaying) pausePlayback(); });
-        editor.addEventListener('keyup', saveState);
-        editor.addEventListener('keydown', (e) => { if (isPlaying) pausePlayback(); });
+        
+        editor.addEventListener('input', () => {
+            if (!isPlaying && !isPaused) saveState();
+        });
 
+        editor.addEventListener('mousedown', () => { 
+            if (isPlaying) pausePlayback(); 
+        });
+
+        editor.addEventListener('keydown', (e) => { 
+            if (isPlaying) pausePlayback(); 
+        });
+
+        // Optimized paste handler for massive text
         editor.onpaste = (e) => {
             e.preventDefault();
             const text = (e.originalEvent || e).clipboardData.getData('text/plain');
-            document.execCommand('insertText', false, text);
+            
+            // Fast insertion for large strings
+            const selection = window.getSelection();
+            if (!selection.rangeCount) return;
+            selection.deleteFromDocument();
+            selection.getRangeAt(0).insertNode(document.createTextNode(text));
+            selection.collapseToEnd();
+            
             saveState();
         };
     </script>
