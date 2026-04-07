@@ -71,7 +71,7 @@
 
                 <div class="flex flex-col">
                     <span class="text-[9px] uppercase font-bold text-slate-400">Speed: <span id="speed-val">1.0</span>x</span>
-                    <input type="range" id="speed-range" min="0.5" max="2" step="0.1" value="1.0" class="accent-blue-600 w-24">
+                    <input type="range" id="speed-range" min="0.5" max="3" step="0.1" value="1.0" class="accent-blue-600 w-24">
                 </div>
 
                 <button id="btn-clear" class="text-slate-400 hover:text-red-500 transition-colors text-xs font-bold px-2">
@@ -137,7 +137,6 @@ The active sentence will be highlighted in yellow and the page will automaticall
                 lastManualCursorOffset = state.offset || -1;
                 speedRange.value = state.speed || "1.0";
                 speedVal.innerText = speedRange.value;
-                // Wait for voices to load before setting voiceSelect
                 return state.voice;
             }
             return null;
@@ -147,8 +146,7 @@ The active sentence will be highlighted in yellow and the page will automaticall
             voices = synth.getVoices();
             if (voices.length === 0) return;
 
-            const savedVoice = loadState();
-            const selectedBefore = savedVoice || voiceSelect.value;
+            const savedVoiceName = loadState();
             
             voiceSelect.innerHTML = '';
             
@@ -167,10 +165,9 @@ The active sentence will be highlighted in yellow and the page will automaticall
                 voiceSelect.appendChild(opt);
             });
 
-            if (selectedBefore) voiceSelect.value = selectedBefore;
+            if (savedVoiceName) voiceSelect.value = savedVoiceName;
             statusText.innerText = "Ready";
             
-            // If there' a saved offset, visually prepare segments so highlight can work
             if (lastManualCursorOffset !== -1) {
                 prepareSentences();
             }
@@ -274,7 +271,6 @@ The active sentence will be highlighted in yellow and the page will automaticall
             };
 
             utterance.onboundary = (event) => {
-                // Periodically update the saved offset as we speak
                 const segmentStart = sentences[currentSentenceIndex].start;
                 const charIndex = event.charIndex;
                 lastManualCursorOffset = segmentStart + charIndex;
@@ -284,7 +280,7 @@ The active sentence will be highlighted in yellow and the page will automaticall
             utterance.onend = () => {
                 if (isPlaying && !isPaused) {
                     currentSentenceIndex++;
-                    lastManualCursorOffset = -1; // Reset trim for next segment
+                    lastManualCursorOffset = -1; 
                     speakNext();
                 }
             };
@@ -389,20 +385,10 @@ The active sentence will be highlighted in yellow and the page will automaticall
         };
 
         voiceSelect.onchange = saveState;
-
         editor.addEventListener('input', saveState);
-
-        editor.addEventListener('mousedown', () => {
-            if (isPlaying) pausePlayback();
-        });
-
-        editor.addEventListener('keyup', () => {
-            saveState();
-        });
-
-        editor.addEventListener('keydown', (e) => {
-            if (isPlaying) pausePlayback();
-        });
+        editor.addEventListener('mousedown', () => { if (isPlaying) pausePlayback(); });
+        editor.addEventListener('keyup', saveState);
+        editor.addEventListener('keydown', (e) => { if (isPlaying) pausePlayback(); });
 
         editor.onpaste = (e) => {
             e.preventDefault();
